@@ -26,13 +26,12 @@ struct GeminiRequest: Content {
     let prompt: String?
 }
 
-// Main handler for Gemini via OpenRouter
 func handleGeminiRoute(req: Request) async throws -> Response {
     let body = try? req.content.decode(GeminiRequest.self)
     let userPrompt = body?.prompt ?? "Analyse AR Camera Frame"
 
     guard let apiKey = Environment.get("OPENROUTER_API_KEY"), !apiKey.isEmpty else {
-        let errJson = "{\"error\":\"OPENROUTER_API_KEY environment variable is missing\"}"
+        let errJson = "{\"error\":\"OPENROUTER_API_KEY is missing\"}"
         var headers = HTTPHeaders()
         headers.add(name: .contentType, value: "application/json")
         return Response(status: .internalServerError, headers: headers, body: .init(string: errJson))
