@@ -7,74 +7,69 @@ defer {
     app.shutdown()
 }
 
-// 1. Health check
+// Health check endpoint
 app.get("ar", "idle-status") { (req: Request) -> String in
-    return "{\"status\":\"idle\",\"service\":\"Pair-AI-Vertex\"}"
+    return "{\"status\":\"idle\",\"service\":\"Pair-AI-OpenRouter\"}"
 }
 
-// Structs cho Vertex AI Payload
-struct VertexPart: Content {
-    let text: String
-}
-
-struct VertexContent: Content {
+struct OpenRouterMessage: Content {
     let role: String
-    let parts: [VertexPart]
+    let content: String
 }
 
-struct VertexPayload: Content {
-    let contents: [VertexContent]
+struct OpenRouterPayload: Content {
+    let model: String
+    let messages: [OpenRouterMessage]
 }
 
 struct GeminiRequest: Content {
     let prompt: String?
 }
 
-struct TokenResult: Content {
-    let access_token: String
-}
-
-// 2. Handler riêng biệt cho Vertex AI Route
+// Main handler for Gemini via OpenRouter
 func handleGeminiRoute(req: Request) async throws -> Response {
     let body = try? req.content.decode(GeminiRequest.self)
     let userPrompt = body?.prompt ?? "Analyse AR Camera Frame"
 
-    // Lấy Access Token từ Metadata Server của Cloud Run (IAM Auth)
-    let tokenURI = URI(string: "http://metadata.google.internal/computeMetadata/v1/instance/service-account/default/token")
-    let tokenResponse = try await req.client.get(tokenURI) { (tokenReq: inout ClientRequest) in
-        tokenReq.headers.add(name: "Metadata-Flavor", value: "Google")
-    }
-    
-    guard let tokenData = try? tokenResponse.content.decode(TokenResult.self) else {
-        return Response(status: .internalServerError, body: .init(string: "{\"error\":\"Failed to fetch IAM Access Token from Cloud Run Metadata\"}"))
+    guard let apiKey = Environment.get("OPENROUTER_API_KEY"), !apiKey.isEmpty else {
+        let errJson = "{\"error\":\"OPENROUTER_API_KEY environment variable is missing\"}"
+        var headers = HTTPHeaders()
+        headers.add(name: .contentType, value: "application/json")
+        return Response(status: .internalServerError, headers: headers, body: .init(string: errJson))
     }
 
-    // Endpoint Vertex AI trên project gemini-pair-ai
-    let projectID = "gemini-pair-ai"
-    let location = "asia-east1"
-    let model = "gemini-1.5-flash"
-    let vertexURI = URI(string: "https://\(location)-aiplatform.googleapis.com/v1/projects/\(projectID)/locations/\(location)/publishers/google/models/\(model):generateContent")
+    let openRouterURI = URI(string: "https://openrouter.ai/api/v1/chat/completions")
+    let payload = OpenRouterPayload(
+        model: "google/gemini-2.0-flash-001",
+        messages: [OpenRouterMessage(role: "user", content: userPrompt)]
+    )
 
-    let payload = VertexPayload(contents: [
-        VertexContent(role: "user", parts: [VertexPart(text: userPrompt)])
-    ])
+    do {
+        let clientResponse = try await req.client.post(openRouterURI) { (clientReq: inout ClientRequest) in
+            clientReq.headers.bearerAuthorization = BearerAuthorization(token: apiKey)
+            clientReq.headers.add(name: "HTTP-Referer", value: "https://pair-ai-service.onrender.com")
+            clientReq.headers.add(name: "X-Title", value: "Pair-AI")
+            try clientReq.content.encode(payload, as: .json)
+        }
 
-    let clientResponse = try await req.client.post(vertexURI) { (clientReq: inout ClientRequest) in
-        clientReq.headers.bearerAuthorization = BearerAuthorization(token: tokenData.access_token)
-        try clientReq.content.encode(payload, as: .json)
+        let responseBody: Response.Body
+        if let buffer = clientResponse.body {
+            responseBody = .init(buffer: buffer)
+        } else {
+            responseBody = .empty
+        }
+
+        var resHeaders = clientResponse.headers
+        resHeaders.replaceOrAdd(name: .contentType, value: "application/json")
+        return Response(status: clientResponse.status, headers: resHeaders, body: responseBody)
+    } catch {
+        let errDetail = "{\"error\":\"Failed to reach OpenRouter: \(error.localizedDescription)\"}"
+        var headers = HTTPHeaders()
+        headers.add(name: .contentType, value: "application/json")
+        return Response(status: .internalServerError, headers: headers, body: .init(string: errDetail))
     }
-
-    let responseBody: Response.Body
-    if let buffer = clientResponse.body {
-        responseBody = .init(buffer: buffer)
-    } else {
-        responseBody = .empty
-    }
-
-    return Response(status: clientResponse.status, headers: clientResponse.headers, body: responseBody)
 }
 
-// Đăng ký route
 app.post("ar", "session", "gemini-route", use: handleGeminiRoute)
 
 try app.run()
