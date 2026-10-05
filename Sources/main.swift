@@ -39,7 +39,7 @@ func handleGeminiRoute(req: Request) async throws -> Response {
 
     let openRouterURI = URI(string: "https://openrouter.ai/api/v1/chat/completions")
     let payload = OpenRouterPayload(
-        model: "google/gemini-2.0-flash-001",
+        model: "google/gemini-3.6-flash",
         messages: [OpenRouterMessage(role: "user", content: userPrompt)]
     )
 
