@@ -1,0 +1,24 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:Pair-AI}",
+            "name": "Debug Pair-AI",
+            "target": "Pair-AI",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug Pair-AI"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:Pair-AI}",
+            "name": "Release Pair-AI",
+            "target": "Pair-AI",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release Pair-AI"
+        }
+    ]
+}
