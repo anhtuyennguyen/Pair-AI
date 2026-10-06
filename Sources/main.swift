@@ -7,11 +7,12 @@ defer {
     app.shutdown()
 }
 
-// Health check endpoint
+// 1. Endpoint Check Status
 app.get("ar", "idle-status") { (req: Request) -> String in
-    return "{\"status\":\"idle\",\"service\":\"Pair-AI-OpenRouter\"}"
+    return "{\"status\":\"idle\",\"service\":\"Pair-AI-DigitalTwin-Engine\"}"
 }
 
+// 2. Data Models
 struct OpenRouterMessage: Content {
     let role: String
     let content: String
@@ -22,13 +23,32 @@ struct OpenRouterPayload: Content {
     let messages: [OpenRouterMessage]
 }
 
-struct GeminiRequest: Content {
+struct PARequest: Content {
     let prompt: String?
+    let mode: String? // "companion", "translate_en_vi", "translate_vi_en"
+    let user_id: String?
 }
 
-func handleGeminiRoute(req: Request) async throws -> Response {
-    let body = try? req.content.decode(GeminiRequest.self)
-    let userPrompt = body?.prompt ?? "Analyse AR Camera Frame"
+struct PAResponse: Content {
+    let response_text: String
+    let mode: String
+    let pa_action: String // "idle", "walk", "speak", "translate"
+}
+
+// 3. System Prompt khởi tạo tính cách PA Avatar
+let paSystemPrompt = """
+Bạn là PA-Avatar, bản sao số (Digital Twin) thông minh của anh Tuyên.
+- Tính cách: Am hiểu công nghệ, lịch sự, nhã nhặn, đồng hành 24/7.
+- Nhiệm vụ:
+  1. Nếu mode là 'companion': Trò chuyện đồng hành, trả lời ngắn gọn, tự nhiên bằng Tiếng Việt.
+  2. Nếu mode là 'translate_en_vi': Dịch chính xác câu Tiếng Anh sang Tiếng Việt chuẩn văn phong giao tiếp.
+  3. Nếu mode là 'translate_vi_en': Dịch chính xác câu Tiếng Việt sang Tiếng Anh tự nhiên.
+"""
+
+func handlePARoute(req: Request) async throws -> Response {
+    let body = try? req.content.decode(PARequest.self)
+    let userPrompt = body?.prompt ?? "Xin chào PA Avatar"
+    let currentMode = body?.mode ?? "companion"
 
     guard let apiKey = Environment.get("OPENROUTER_API_KEY"), !apiKey.isEmpty else {
         let errJson = "{\"error\":\"OPENROUTER_API_KEY is missing\"}"
@@ -40,14 +60,17 @@ func handleGeminiRoute(req: Request) async throws -> Response {
     let openRouterURI = URI(string: "https://openrouter.ai/api/v1/chat/completions")
     let payload = OpenRouterPayload(
         model: "google/gemini-3.6-flash",
-        messages: [OpenRouterMessage(role: "user", content: userPrompt)]
+        messages: [
+            OpenRouterMessage(role: "system", content: paSystemPrompt),
+            OpenRouterMessage(role: "user", content: "Mode: \(currentMode). Yêu cầu: \(userPrompt)")
+        ]
     )
 
     do {
         let clientResponse = try await req.client.post(openRouterURI) { (clientReq: inout ClientRequest) in
             clientReq.headers.bearerAuthorization = BearerAuthorization(token: apiKey)
             clientReq.headers.add(name: "HTTP-Referer", value: "https://pair-ai-service.onrender.com")
-            clientReq.headers.add(name: "X-Title", value: "Pair-AI")
+            clientReq.headers.add(name: "X-Title", value: "Pair-AI-DigitalTwin")
             try clientReq.content.encode(payload, as: .json)
         }
 
@@ -69,6 +92,6 @@ func handleGeminiRoute(req: Request) async throws -> Response {
     }
 }
 
-app.post("ar", "session", "gemini-route", use: handleGeminiRoute)
+app.post("ar", "session", "gemini-route", use: handlePARoute)
 
 try app.run()
